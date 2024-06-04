@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import math
 import pathlib
+import typing
 
 import accelerate
 import loguru
@@ -46,6 +48,19 @@ class Dataset(torch_data.Dataset):
         return self.transform(img)
 
 
+class SampleDataset(torch_data.Dataset):
+    def __init__(self, num_samples: int):
+        super().__init__()
+
+        self.num_samples = num_samples
+
+    def __len__(self) -> int:
+        return self.num_samples
+
+    def __getitem__(self, index: int) -> list[pathlib.Path]:
+        return index
+
+
 class Trainer(object):
     def __init__(
         self,
@@ -56,23 +71,20 @@ class Trainer(object):
 
         self.logger = loguru.logger
         self.trainer_config: cnf.TrainerConfig = config.trainer
+        self.model: diffusion.GaussianDiffusion = diffusion_model
+        self.step: int = 0
 
-        self.accelerator = accelerate.Accelerator(
-            split_batches=True,
+        # ============================================================================================================
+        # Initialize Accelerator
+        # ============================================================================================================
+        self.accelerator: accelerate.Accelerator = accelerate.Accelerator(
+            kwargs_handlers=[accelerate.DistributedDataParallelKwargs(find_unused_parameters=True)],
             mixed_precision='fp16' if self.trainer_config.use_amp else 'no'
         )
 
-        self.model = diffusion_model
-
-        self.step = 0
-
-        # ============================================================================================================
-        # Initialize EMA model
-        # ============================================================================================================
-        if self.accelerator.is_main_process:
-            self.ema = modules.EMA(self.trainer_config.ema_decay)
-            self.ema_model = copy.deepcopy(self.model)
-            self.reset_parameters()
+        # Set seed
+        self.logger.info(f"Set seed to {config.trainer.seed}")
+        accelerate.utils.set_seed(self.trainer_config.seed, device_specific=True)
 
         # ============================================================================================================
         # Initialize dataloader
@@ -90,6 +102,17 @@ class Trainer(object):
         dl = self.accelerator.prepare(dl)
 
         self.dl = utils.cycle(dl)
+
+        # Dataloader for sample
+        sample_num_batches_per_device = math.ceil(36 / self.accelerator.num_processes)
+        self.sample_ds = torch_data.TensorDataset(torch.zeros(36))
+
+        sample_dl = torch_data.DataLoader(
+            self.sample_ds,
+            batch_size=sample_num_batches_per_device
+        )
+
+        self.sample_dl = self.accelerator.prepare(sample_dl)
 
         # ============================================================================================================
         # Initialize accelerate model and optimizer
@@ -111,20 +134,26 @@ class Trainer(object):
 
             wandb.watch(self.model)
 
+        # ============================================================================================================
+        # Initialize EMA model
+        # ============================================================================================================
+        self.ema = modules.EMA(self.trainer_config.ema_decay)
+        self.ema_model: diffusion.GaussianDiffusion = copy.deepcopy(self.accelerator.unwrap_model(self.model))
+        self.reset_parameters()
+
     @property
     def device(self):
         return self.accelerator.device
 
     def reset_parameters(self) -> None:
-        self.ema_model.load_state_dict(self.model.state_dict())
+        self.ema_model.load_state_dict(self.accelerator.get_state_dict(self.model))
 
     def step_ema(self) -> None:
-        if self.accelerator.is_main_process:
-            if self.step < self.trainer_config.step_start_ema:
-                self.reset_parameters()
-                return
+        if self.step < self.trainer_config.step_start_ema:
+            self.reset_parameters()
+            return
 
-            self.ema.update_model_average(self.ema_model, self.model)
+        self.ema.update_model_average(self.ema_model, self.model)
 
     def save(self, file_name: str) -> None:
         if self.accelerator.is_main_process:
@@ -145,9 +174,13 @@ class Trainer(object):
         checkpoint_path = self.trainer_config.checkpoints_dir / f'model-{milestone}.pt'
         checkpoint_path = checkpoint_path.absolute()
 
-        self.logger.info(f"loading from {checkpoint_path}")
+        self.load_from_file(file_path=checkpoint_path)
+
+    def load_from_file(self, file_path: pathlib.Path) -> None:
+        self.logger.info(f"loading from {file_path}")
+
         checkpoint = torch.load(
-            checkpoint_path,
+            file_path,
             map_location=self.device
         )
 
@@ -162,9 +195,8 @@ class Trainer(object):
         # Load optimizer
         self.opt.load_state_dict(checkpoint['opt'])
 
-        if self.accelerator.is_main_process:
-            # Load EMA
-            self.ema_model.load_state_dict(checkpoint['ema'])
+        # Load EMA
+        self.ema_model.load_state_dict(checkpoint['ema'])
 
         # Load scaler
         if utils.exists(self.accelerator.scaler) and utils.exists(checkpoint['scaler']):
@@ -205,36 +237,79 @@ class Trainer(object):
                     # Update EMA
                     # ============================================================================================================
                     self.accelerator.wait_for_everyone()
+
                     self.step_ema()
 
-                if self.accelerator.is_main_process and self.step != 0 and self.step % self.trainer_config.save_and_sample_every == 0:
+                if self.step != 0 and self.step % self.trainer_config.save_and_sample_every == 0:
+                    self.accelerator.wait_for_everyone()
+
                     # ============================================================================================================
                     # Unconditional sample
                     # ============================================================================================================
-                    self.accelerator.wait_for_everyone()
                     self.ema_model.eval()
 
                     with torch.inference_mode():
-                        batches = utils.num_to_groups(36, self.trainer_config.train_batch_size)
-                        all_images_list = list(map(lambda n: self.ema_model.sample(batch_size=n), batches))
+                        for batch in self.sample_dl:
+                            batch_size = batch[0].shape[0]
 
-                    all_images = torchvision_utils.make_grid(torch.cat(all_images_list, dim=0), nrow=6)
+                            with self.accelerator.autocast():
+                                sampled_image = self.ema_model.sample(batch_size=batch_size, rank=self.accelerator.process_index)
 
-                    pil_image: Image.Image = F.to_pil_image(utils.unnormalize_to_zero_to_one(all_images))
-                    pil_image.save(
-                        self.trainer_config.sampled_dir / f'sample-{self.step}.png'
-                    )
+                            all_images = self.accelerator.gather(sampled_image)[:36]
 
-                    if self.trainer_config.wandb_enabled:
-                        wandb.log({'sample': [wandb.Image(pil_image)]}, step=self.step)
+                            if self.accelerator.is_main_process:
+                                all_images = torchvision_utils.make_grid(all_images, nrow=6)
 
-                    # ============================================================================================================
-                    # Save checkpoint
-                    # ============================================================================================================
-                    self.save(f'model-{self.step}.pt')
+                                pil_image: Image.Image = F.to_pil_image(all_images)
+                                pil_image.save(self.trainer_config.sampled_dir / f'sample-{self.step}.png')
+
+                                if self.trainer_config.wandb_enabled:
+                                    wandb.log({'sample': [wandb.Image(pil_image)]}, step=self.step)
+
+                    if self.accelerator.is_main_process:
+                        # ============================================================================================================
+                        # Save checkpoint
+                        # ============================================================================================================
+                        self.save(f'model-{self.step}.pt')
+
+                    self.accelerator.wait_for_everyone()
 
                 self.step += 1
                 pbar.update(1)
 
         self.save('model-last.pt')
         self.logger.info('training complete')
+
+    def sample(
+        self,
+        num_samples: int,
+        batch_size: int,
+        output_dir: pathlib.Path
+    ) -> None:
+        self.logger.info(f"Sampling {num_samples} images to {output_dir}")
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        sample_dataset = SampleDataset(num_samples)
+
+        sample_dataloader = torch_data.DataLoader(
+            sample_dataset,
+            batch_size=batch_size
+        )
+        sample_dataloader = self.accelerator.prepare(sample_dataloader)
+
+        self.ema_model.eval()
+
+        with torch.inference_mode():
+            for batch in tqdm.tqdm(sample_dataloader, disable=not self.accelerator.is_main_process, desc='sampling'):
+                global_indices: list[int] = batch
+                batch_size = len(global_indices)
+
+                with self.accelerator.autocast():
+                    sampled_image = self.ema_model.sample(batch_size=batch_size, rank=self.accelerator.process_index, disable_pbar=True)
+
+                for i, image in enumerate(sampled_image):
+                    image = F.to_pil_image(image)
+
+                    out_file_path = output_dir / f'sample-{global_indices[i]:08}.png'
+
+                    image.save(out_file_path)

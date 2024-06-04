@@ -1,11 +1,12 @@
 {
     "trainer": {
-        "train_dataset_dir": "/home/data/DockerProjects/NvidiaPytorch/Datasets/CelebA/celeba128_train",
+        "train_dataset_dir": "/home/araka/Datasets/CelebA/celeba128_train/all",
         "log_dir": "log/celeba128",
         "train_batch_size": 32,
         "train_num_steps": 100000,
-        "save_and_sample_every": 20,
+        "save_and_sample_every": 2000,
         "wandb_enabled": true,
+        "wandb_name": "celeba128_4x4",
         "wandb_project": "PatchDDPM_original"
     },
     "model": {

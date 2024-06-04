@@ -1,111 +1,84 @@
-from patchedUnet import PatchedUnetWithGlobalEncoding
-from denoising_diffusion_pytorch import GaussianDiffusion
-from setting import Setting
-
-import torch
-from torch.nn.parallel import DataParallel
-import numpy as np
-import os
-import sys
 import argparse
-from multiprocessing import Pool
-from PIL import Image
+import pathlib
+
+import accelerate
+import loguru
+import torch
+
+import patch_based_ddpm.denoising_diffusion_pytorch as ddpm
 
 
-class CustomParallel(DataParallel):
-    def __getattr__(self, name):
-        try:
-            return super().__getattr__(name)
-        except AttributeError:
-            return getattr(self.module, name)
-
-
-def main(args):
-    parser = argparse.ArgumentParser()
-    parser.add_argument("pathTrainedParam")
-    parser.add_argument("pathSaveDir")
-    parser.add_argument("settingFilePath")
-    parser.add_argument("--jobID", default=0, type=int)
-    parser.add_argument("--batch_size", default=256, type=int)
-    parser.add_argument("--num_iter", default=200, type=int)
-    parser.add_argument("--nParallels", default=4, type=int)
-    args = parser.parse_args()
-
-    pathTrainedParam = args.pathTrainedParam
-    pathSaveDir = args.pathSaveDir
-    settingFilePath = args.settingFilePath
-    jobID = args.jobID
-    batch_size = args.batch_size
-    num_iter = args.num_iter
-    nParallels = args.nParallels
-
-    setting = Setting(settingFilePath)
-    dim = setting.dim
-    patchDivider = setting.patchDivider
-    dim_mults = setting.dim_mults
-    timeSteps = setting.timeSteps
-    imageSize = setting.imageSize
-
-    model = PatchedUnetWithGlobalEncoding(
-        dim=dim,
-        dim_mults=dim_mults,
-        patchDivider=patchDivider
-    )
-    state_dict = torch.load(
-        pathTrainedParam,
-        map_location=torch.device("cpu")
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Sample images from a Patch-based Denoising Diffusion Probabilistic Model",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
-    model = CustomParallel(model)
-
-    diffusion = GaussianDiffusion(
-        model,
-        image_size=imageSize,
-        timesteps=timeSteps,
-        loss_type='l1'
+    parser.add_argument(
+        "--config",
+        type=pathlib.Path,
+        required=True,
+        help="Path to the config file"
     )
-    diffusion.load_state_dict(state_dict["ema"])
 
-    diffusion = diffusion.cuda()
+    parser.add_argument(
+        "--ckpt",
+        type=pathlib.Path,
+        required=True,
+        help="Path to the checkpoint file"
+    )
 
-    os.makedirs(pathSaveDir, exist_ok=True)
-    for i in range(num_iter):
-        print(
-            f"Sampling  |  {i+1}/{num_iter} ==================================================="
-        )
-        sampledImage: torch.Tensor = diffusion.sample(batch_size=batch_size)
+    parser.add_argument(
+        "--out-dir",
+        type=pathlib.Path,
+        required=True,
+        help="Path to the checkpoint file"
+    )
 
-        sampledImage: np.ndarray = sampledImage.detach().clone().permute(
-            0,
-            2,
-            3,
-            1
-        ).cpu().numpy()
+    parser.add_argument(
+        "--n-samples",
+        type=int,
+        default=16,
+        help="Number of samples to generate"
+    )
 
-        ls_args = []
-        for j in range(batch_size):
-            image = sampledImage[j]
-            pathImage = os.path.join(
-                pathSaveDir,
-                f"image_{jobID}_{i * batch_size + j}.png"
-            )
-            args = (image, pathImage)
-            ls_args.append(args)
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=64,
+        help="Batch size for sampling"
+    )
 
-        with Pool(processes=nParallels) as procecss:
-            procecss.map(func=saveImages_wapped, iterable=ls_args)
-
-
-def saveImages_wapped(args):
-    saveImages(*args)
-    pass
+    return parser.parse_args()
 
 
-def saveImages(imageArray: np.ndarray, pathImage: str):
-    image = Image.fromarray((imageArray*255).astype(np.uint8))
-    image.save(pathImage)
+def main():
+    logger = loguru.logger
+
+    args = parse_args()
+
+    # Load config
+    logger.info(f"Loading config from {args.config}")
+    config: ddpm.Config = ddpm.Config.load(args.config)
+
+    # NOTE: Turn off wandb
+    config.trainer.wandb_enabled = False
+
+    # Create model
+    model = ddpm.patched_unet.PatchedUnetWithGlobalEncoding(config.model)
+
+    # Create diffusion model
+    diffusion_model = ddpm.diffusion.GaussianDiffusion(config, model)
+
+    # Create trainer
+    trainer = ddpm.trainer.Trainer(diffusion_model, config)
+    trainer.load_from_file(args.ckpt)
+
+    # Sample
+    trainer.sample(args.n_samples, args.batch_size, args.out_dir)
+
+    logger.info("Bye.")
 
 
 if __name__ == "__main__":
-    args = sys.argv
-    main(args)
+    main()

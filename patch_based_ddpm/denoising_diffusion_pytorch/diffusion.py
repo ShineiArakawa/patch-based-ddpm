@@ -179,7 +179,7 @@ class GaussianDiffusion(nn.Module):
         return model_mean + nonzero_mask * (0.5 * model_log_variance).exp() * noise
 
     @torch.no_grad()
-    def p_sample_loop(self, shape: tuple[int, ...]) -> torch.Tensor:
+    def p_sample_loop(self, shape: tuple[int, ...], rank: int = None, disable_pbar: bool = False) -> torch.Tensor:
         """Run the reverse diffusion process
 
         Args:
@@ -193,7 +193,9 @@ class GaussianDiffusion(nn.Module):
         b = shape[0]
         img = torch.randn(shape, device=device)
 
-        for i in tqdm.tqdm(reversed(range(0, self.num_timesteps)), desc='sampling loop time step', total=self.num_timesteps):
+        tqdm_label = 'sampling loop time step' if rank is None else f'sampling loop time step (rank: {rank})'
+
+        for i in tqdm.tqdm(reversed(range(0, self.num_timesteps)), desc=tqdm_label, total=self.num_timesteps, disable=disable_pbar):
             img = self.p_sample(img, torch.full((b,), i, device=device, dtype=torch.long))
 
         img = utils.unnormalize_to_zero_to_one(img)
@@ -201,11 +203,11 @@ class GaussianDiffusion(nn.Module):
         return img
 
     @torch.no_grad()
-    def sample(self, batch_size: int = 16) -> torch.Tensor:
+    def sample(self, batch_size: int = 16, rank: int = None, disable_pbar: bool = False) -> torch.Tensor:
         image_size = self.config.model.image_size
         channels = self.config.model.channels
 
-        return self.p_sample_loop((batch_size, channels, image_size, image_size))
+        return self.p_sample_loop((batch_size, channels, image_size, image_size), rank, disable_pbar)
 
     def q_sample(self, x_start: torch.Tensor, t: torch.Tensor, noise: torch.Tensor = None) -> torch.Tensor:
         """Calculate x_t from x_{t=0} and noise according to the equation (4) in the DDPM paper

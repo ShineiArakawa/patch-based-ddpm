@@ -1,5 +1,6 @@
 import argparse
 
+import accelerate
 import loguru
 
 import patch_based_ddpm.denoising_diffusion_pytorch as ddpm
@@ -41,7 +42,7 @@ def main():
     model = ddpm.patched_unet.PatchedUnetWithGlobalEncoding(config.model)
 
     # Create diffusion model
-    diffusion_model = ddpm.diffusion.GaussianDiffusion(config, model).cuda()
+    diffusion_model = ddpm.diffusion.GaussianDiffusion(config, model)
 
     # Create trainer
     trainer = ddpm.trainer.Trainer(diffusion_model, config)

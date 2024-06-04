@@ -25,6 +25,7 @@ class TrainerConfig:
     update_ema_every: int = 10
     save_and_sample_every: int = 1000
     num_workers: int = os.cpu_count()
+    seed: int = 1234
 
     wandb_enabled: bool = False
     wandb_project: str | None = None
@@ -44,7 +45,7 @@ class TrainerConfig:
 
     @property
     def wandb_log_dir(self) -> pathlib.Path:
-        dir_path = self.log_dir / 'wandb'
+        dir_path = self.log_dir
         dir_path.mkdir(parents=True, exist_ok=True)
         return dir_path
 

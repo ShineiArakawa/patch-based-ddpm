@@ -22,31 +22,52 @@ pipenv shell
 ## Pre-trained models
 We provide the following pre-trained weights. You can quickly run sampling by specify the path to your downloaded pre-trained weights.
 
-- CelebA on 2 x 2 patch division: [here]()
-- CelebA on 4 x 4 patch division: [here]()
-- CelebA on 8 x 8 patch division: [here]()
-- LSUN bedroom on 2 x 2 patch division: [here]()
-- LSUN bedroom on 4 x 4 patch division: [here]()
-- LSUN bedroom on 8 x 8 patch division: [here]()
+- ~~2 x 2 patch division on CelebA~~
+- 4 x 4 patch division on CelebA: [here]()
+- ~~8 x 8 patch division on CelebA~~
+- ~~2 x 2 patch division on LSUN bedroom~~
+- ~~4 x 4 patch division on LSUN bedroom~~
+- ~~8 x 8 patch division on LSUN bedroom~~
 
 ## Getting Started
-### Sampling
+We use `accelerate` library to manage multi-GPU configuration. Before moving onto the next section, make sure to configure `accelerate` setting by the following command.
+```bash
+accelerate config
+```
 
+### Sampling
+Run the following command to sample images from the pre-trained models.
+```bash
+accelerate launch -m patch_based_ddpm.sample \
+    --config ${CONFIG_FILE} \
+    --ckpt ${CHECKPOINT} \
+    --out-dir ${OUT_DIR} \
+    --n-samples ${NUM_SAMPLES} \
+    --batch-size ${BATCH_SIZE}
+```
+
+For example, if you are running a 4x4 divided patch-based DDPM, run the command like this.
+```bash
+accelerate launch -m patch_based_ddpm.sample \
+    --config configs/config_patch_divider=4.json \
+    --ckpt logs/celeba128/checkpoints/model-last.pt \
+    --out-dir sampled/celeba128 \
+    --n-samples 16 \
+    --batch-size 8
+```
 
 ### Training
+Run the following command to train the models. During training, `wandb` automatically records all the training stats. Please make sure to log in to `wandb` with your account beforehand.
+```bash
+accelerate launch -m patch_based_ddpm.train \
+    --config ${CONFIG_FILE}
+```
 
-
-### Evaluation
-
-
-
-
-
-
-
-
-
-
+For example, if you are running a 4x4 divided patch-based DDPM, run the command like this.
+```bash
+accelerate launch -m patch_based_ddpm.train \
+    --config configs/config_patch_divider=4.json
+```
 
 ## Citation
 ```
@@ -62,5 +83,5 @@ We provide the following pre-trained weights. You can quickly run sampling by sp
 
 ## Acknowledgements
 We thank Asst. Prof. Qi Feng for valuable feedbacks as well as English proofreading and Yoshiki Kubotani for feedbacks regarding the graphical design.
-This research is supported by the JSPS KAKENHI Grant Number 21H05054.
+This research is supported by the Japan Society for the Promotion of Science KAKENHI Grant Number 21H05054.
 This implementation is heavily based on the repo [denoising-diffusion-pytorch](https://github.com/lucidrains/denoising-diffusion-pytorch).
