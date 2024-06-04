@@ -1,0 +1,21 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = false
+name = "pip_conf_index_global"
+
+[packages]
+torch = "*"
+torchvision = "*"
+torchinfo = "*"
+matplotlib = "*"
+dataclasses-json = "*"
+clean-fid = "*"
+einops = "*"
+tqdm = "*"
+wandb = "*"
+loguru = "*"
+accelerate = "*"
+
+[dev-packages]
+
+[requires]
