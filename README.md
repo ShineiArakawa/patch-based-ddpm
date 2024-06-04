@@ -30,7 +30,7 @@ We provide the following pre-trained weights. You can quickly run sampling by sp
 - ~~8 x 8 patch division on LSUN bedroom~~
 
 ## Getting Started
-We use `accelerate` library to manage multi-GPU configuration. Before moving onto the next section, make sure to configure `accelerate` setting by the following command.
+We use `accelerate` library to manage multi-GPU configurations. Before moving on to the next section, make sure to configure `accelerate` settings by the following command.
 ```bash
 accelerate config
 ```
@@ -68,6 +68,8 @@ For example, if you are running a 4x4 divided patch-based DDPM, run the command 
 accelerate launch -m patch_based_ddpm.train \
     --config configs/config_patch_divider=4.json
 ```
+
+Training with 12.8 million images takes approximately 20 hours using four NVIDIA RTX A6000 GPUs.
 
 ## Citation
 ```
