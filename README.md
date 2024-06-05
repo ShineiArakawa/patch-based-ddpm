@@ -23,7 +23,7 @@ pipenv shell
 We provide the following pre-trained weights. You can quickly run sampling by specifying the path to your downloaded pre-trained weights.
 
 - ~~2 x 2 patch division on CelebA~~
-- 4 x 4 patch division on CelebA: Upload within a week
+- 4 x 4 patch division on CelebA: [here[(https://drive.google.com/file/d/14ir8mTkjlUOkjnDjknCFD8Z14_Xi7Wn2/view?usp=sharing)
 - ~~8 x 8 patch division on CelebA~~
 - ~~2 x 2 patch division on LSUN bedroom~~
 - ~~4 x 4 patch division on LSUN bedroom~~
