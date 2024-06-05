@@ -1,13 +1,13 @@
 {
     "trainer": {
-        "train_dataset_dir": "/home/araka/Datasets/CelebA/celeba128_train/all",
-        "log_dir": "log/celeba128",
+        "train_dataset_dir": "Path to your dataset",
+        "log_dir": "Path to your log dir",
         "train_batch_size": 32,
         "train_num_steps": 100000,
         "save_and_sample_every": 2000,
         "wandb_enabled": true,
-        "wandb_name": "celeba128_4x4",
-        "wandb_project": "PatchDDPM_original"
+        "wandb_name": "your wandb run name",
+        "wandb_project": "your wandb project name"
     },
     "model": {
         "dim": 128,
